@@ -13,6 +13,7 @@ using Mono.Collections.Generic;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using System.Net;
+using System.Text;
 
 namespace UploadToSentry
 {
@@ -38,8 +39,8 @@ namespace UploadToSentry
 
             // var version_string = Regex.Match(payload["configuration"]["version"].ToString(), @"").Groups;
 
-            var event_id = new JProperty("event_id", "f432134b85314b7bb5ad7af568ee278a");
-            var timestamp = new JProperty("timestamp", "\t\"timestamp\": \"2018-08-24T14:52:53.382084Z\",\n");
+            var event_id = new JProperty("event_id", Guid.NewGuid().ToString("n"));
+            var timestamp = new JProperty("timestamp", DateTime.UtcNow.ToString("s", System.Globalization.CultureInfo.InvariantCulture));
             var exc_objs = new List<JObject> ();
             var failure_type = "Unhandled Managed Exception";
 
@@ -79,11 +80,13 @@ namespace UploadToSentry
                         var offset_val = Convert.ToUInt32(frame["il_offset"].ToString (), 16);
 
                         var output_frame = codebase.Find (guid_val, token_val, offset_val);
+                        if (output_frame == null)
+                            continue;
 
                         var guid  = new JProperty("guid", guid_val);
                         var token =  new JProperty("token", token_val);
                         var il_offset = new JProperty("il_offset", offset_val);
-
+                       
                         output_frame.Add (new JProperty("vars", new JObject(guid, token, il_offset)));
 
                         managed_frames.Add(output_frame);
@@ -136,12 +139,31 @@ namespace UploadToSentry
             request.UserAgent = PacketBuilder.UserAgent;
 
             var header = PacketBuilder.CreateAuthenticationHeader(url);
+            request.Headers ["X-Sentry-Auth"] = header;
 
+            byte[] byteArray = Encoding.UTF8.GetBytes(sentry_message.ToString ());
+            request.ContentLength = byteArray.Length;
 
             Stream dataStream = request.GetRequestStream();
+            dataStream.Write(byteArray, 0, byteArray.Length);
+            dataStream.Close();
 
-            
-               
+            Console.WriteLine("break");
+
+            try {
+                WebResponse response = request.GetResponse ();
+                // Display the status.  
+                Console.WriteLine(((HttpWebResponse)response).StatusDescription);
+
+                StreamReader reader = new StreamReader(response.GetResponseStream());
+                // Read the content.  
+                string responseFromServer = reader.ReadToEnd();
+                // Display the content.  
+                Console.WriteLine(responseFromServer);
+                // Clean up the streams.  
+            } catch (WebException ex) {
+                Console.WriteLine("{0}", ex.Response.Headers [""]);
+            }
         }
 
         class CodeCollection
@@ -164,9 +186,6 @@ namespace UploadToSentry
 
             public JObject Find (string mvid, uint token, uint goal)
             {
-                Console.WriteLine ("Query {0} {1:X} {2:X}", mvid, token, goal);
-                Console.ReadLine ();
-
                 var method_idx = new Tuple<string, uint>(mvid, token);
                 if (!Lookup.ContainsKey(method_idx))
                     return null;
